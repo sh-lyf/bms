@@ -29,13 +29,14 @@
 
 #include "fupdate_config.h"
 #include "lsapi_fs.h"
+#include "lsapi_md5.h"
 
 LSAPI_OSI_Thread_t *bms_mqtt_threadid = NULL;
 
 BMS_BASIC_INFO_T *tacker_base_message = NULL;
 BMS_BASIC_INFO_T *tacker_base_init = NULL;
 LSAPI_OSI_Timer_t *bms_realtime_timer_t = NULL;
-LSAPI_OSI_Timer_t *bms_batinfo_timer_t = NULL;
+//LSAPI_OSI_Timer_t *bms_batinfo_timer_t = NULL;
 LSAPI_OSI_Timer_t *bms_safeevent_timer_t = NULL;
 
 BMS_REALTIME_INFO_T tracker_realtime_info = {{0},{0}};
@@ -44,6 +45,8 @@ Bat_info_t bms_cell_bat_info = {{0},{0}};
 char tracker_ota_url_1[64] = {0};
 char tracker_ota_url_2[64] = {0};
 char *key = "LibSafeAesKeys22";
+
+uint8_t g_mqtt_tracker_init_flag = 0;
 
 #define BMS_TRACKER_MQTT_SUB_TOPIC_BASE_INFO_REPLY "/test/tracker001/tracker/info/base/post_reply"
 #define BMS_TRACKER_MQTT_SUB_TOPIC_REALTIME_INFO_REPLY "/test/tracker001/tracker/info/realtime/post_reply"
@@ -65,7 +68,9 @@ char *key = "LibSafeAesKeys22";
 #define BMS_TRACKER_MQTT_PUB_TOPIC_TRACKER_OTA_REPLY "/test/tracker001/platform/tracker/ota/action_reply"
 #define BMS_TRACKER_MQTT_PUB_TOPIC_LIBSAFE_OTA_REPLY "/test/tracker001/platform/libsafe/ota/action_reply"
 #define BMS_TRACKER_MQTT_PUB_TOPIC_CONFIG_REPLY		"/test/tracker001/platform/tracker/config/action_reply"
-#define BMS_TRACKER_MQTT_PUB_TOPIC_OPERATION_REPLY	"/test/tracker001/platform/bms/operation/action_reply"
+#define BMS_TRACKER_MQTT_PUB_TOPIC_BMS_OPERATION_REPLY	"/test/tracker001/platform/bms/operation/action_reply"
+#define BMS_TRACKER_MQTT_PUB_TOPIC_TRACKER_OPERATION_REPLY	"/test/tracker001/platform/tracker/operation/action_reply"
+
 #define BMS_TRACKER_MQTT_PUB_TOPIC_EXTRA_REPLY	"/test/tracker001/platform/tracker/extra/action_reply"
 
 
@@ -88,8 +93,8 @@ int bms_tracker_query_from_platform(char *payload,int len);
 int bms_tracker_ota_from_platform(char *payload,int len);
 
 int bms_post_baseinfo_to_platform(void);
-int bms_post_realtime_info_to_platform(void);
-int bms_post_cellbat_info_to_platform(void);
+int bms_post_realtime_info_to_platform(int64_t value);
+int bms_post_cellbat_info_to_platform(int64_t value);
 
 extern ZG_BMS_MQTT_INFO_T g_zg_mqtt_info;
 extern LSAPI_OSI_Thread_t *bms_mqtt_thread;
@@ -467,10 +472,12 @@ int32_t bms_payload_decrypte(const char *src,char *dest,uint16_t size)
 			  return 0;  
 		   }
 	}
+#if 0
 	for(cnt = 0; cnt < encrypt_len;cnt++)
 	{
 		LSAPI_Log_Debug("bms_encrypt[%d]=0x%02x",cnt,decrypt_buf[cnt]);
 	}
+#endif
 	padding = decrypt_buf[encrypt_len - 1];
 	LSAPI_Log_Debug("LSAPI bms_payload_decrypte padding is %d",padding);
 	return padding > 16 ? 0 : encrypt_len - padding;
@@ -498,6 +505,8 @@ int bms_tracker_query_from_platform(char *payload,int len)
 	bool config;
 	bool bat;
 	bool status = false;
+
+	LSAPI_OSI_Event_t event = {};
 	
 	LSAPI_Log_Debug("bms_tracker_query_from_platform payload is %s",payload); 
 	LSAPI_Log_Debug("bms_tracker_query_from_platform payload len is %d",len); 
@@ -534,18 +543,49 @@ int bms_tracker_query_from_platform(char *payload,int len)
     }
 	LSAPI_Log_Debug("bms_tracker_query_from_platform ota base is %d,realtime is %d,log is %d,config is %d,bat is %d", 
 		base,realtime,log,config,bat);
-	if(base)
+
+	if(base || realtime || bat)
 	{
-		bms_post_baseinfo_to_platform();
+		int64_t timestamp = LSAPI_OSI_EpochTime(); 
+		if(bms_safeevent_timer_t != NULL)
+			LSAPI_OSI_TimerStop(bms_safeevent_timer_t);
+		if(base)
+		{
+			bms_post_baseinfo_to_platform();
+			LSAPI_OSI_ThreadSleep(200);
+		}
+		if(realtime)
+		{
+			if(bms_realtime_timer_t != NULL)
+			{
+				LSAPI_OSI_TimerStop(bms_realtime_timer_t);
+				bms_post_realtime_info_to_platform(timestamp);
+				LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
+			}
+			else
+				bms_post_realtime_info_to_platform(timestamp);
+			LSAPI_OSI_ThreadSleep(200);
+		}
+		if(bat)
+		{
+			if(bms_realtime_timer_t != NULL)
+			{
+				LSAPI_OSI_TimerStop(bms_realtime_timer_t);
+				bms_post_cellbat_info_to_platform(timestamp);
+				LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
+			}
+			else
+			{
+				bms_post_cellbat_info_to_platform(timestamp);
+			}
+			LSAPI_OSI_ThreadSleep(200);
+		}
+		if(bms_safeevent_timer_t != NULL)
+			LSAPI_OSI_TimerStart(bms_safeevent_timer_t,1000);
 	}
-	if(realtime)
-	{
-		bms_post_realtime_info_to_platform();
-	}
-	if(bat)
-	{
-		bms_post_cellbat_info_to_platform();
-	}
+
+	event.id = BMS_MQTT_PUB_QUERY_REPLY_ID;
+	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	
 	return 0;
 }
@@ -568,6 +608,9 @@ int bms_bms_action_from_platform(char *payload,int len)
 	uint8_t action;
 	int32_t value;
 	bool status = false;
+
+	LSAPI_OSI_Event_t event = {};
+	
 	LSAPI_Log_Debug("bms_bms_action_from_platform payload is %s",payload); 
 	LSAPI_Log_Debug("bms_bms_action_from_platform payload len is %d",len); 
 
@@ -597,11 +640,12 @@ int bms_bms_action_from_platform(char *payload,int len)
         is = pb_istream_from_buffer(msg.data.value.bytes, msg.data.value.size);
         status = pb_decode(&is, BmsOperation_fields, &pbdata);
         action = pbdata.action;
-		value = pbdata.action;
+		value = pbdata.value;
     }
 	
-	LSAPI_Log_Debug("bms_bms_action_from_platform ota action is %d,value is %d", action,value);
-
+	LSAPI_Log_Debug("bms_bms_action_from_platform action is %d,value is %d", action,value);
+	event.id = BMS_MQTT_PUB_BMS_OPERATION_REPLY_ID;
+	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	return 0;
 }
 
@@ -623,6 +667,9 @@ int bms_tracker_action_from_platform(char *payload,int len)
 	bool turnOffBms;
 	bool turnOffTracker;
 	bool status =false;
+
+	LSAPI_OSI_Event_t event = {};
+		
 	LSAPI_Log_Debug("bms_tracker_action_from_platform payload is %s",payload); 
 	LSAPI_Log_Debug("bms_tracker_action_from_platform payload len is %d",len); 
 
@@ -644,27 +691,32 @@ int bms_tracker_action_from_platform(char *payload,int len)
 	timestamp = msg.header.timestamp;
 	strncpy(thingId,msg.header.thingId,64);
 	code = msg.code;
+	LSAPI_Log_Debug("bms_tracker_action_from_platform ota timestamp is %lld,code is %d", timestamp,code);
 
 	if (strcmp(msg.data.type_url, "type.googleapis.com/TrackerOperation") == 0)
     {
+    	LSAPI_Log_Debug("111bms_tracker_action_from_platform ota turnOffBms is %d,turnOffTracker is %d", turnOffBms,turnOffTracker);
         TrackerOperation pbdata = TrackerOperation_init_zero;
         is = pb_istream_from_buffer(msg.data.value.bytes, msg.data.value.size);
         status = pb_decode(&is, TrackerOperation_fields, &pbdata);
 		turnOffBms = pbdata.turnOffBms;
 		turnOffTracker = pbdata.turnOffTracker;
+		LSAPI_Log_Debug("222bms_tracker_action_from_platform ota turnOffBms is %d,turnOffTracker is %d", turnOffBms,turnOffTracker);
     }
 	
-	LSAPI_Log_Debug("bms_tracker_action_from_platform ota turnOffBms is %d,turnOffTracker is %d", turnOffBms,turnOffTracker);
+	LSAPI_Log_Debug("333bms_tracker_action_from_platform ota turnOffBms is %d,turnOffTracker is %d", turnOffBms,turnOffTracker);
+	event.id = BMS_MQTT_PUB_TRACKER_OPERATION_REPLY_ID;
+	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	if(turnOffBms)
 	{
-		LSAPI_OSI_Event_t event = {};
-		event.id = BMS_SND_ACTION_FROM_PLATFORM_ID;
-		event.param1 = turnOffBms;
-		LSAPI_OSI_EvnetSend(bms_thread_event, &event);
+		//LSAPI_OSI_Event_t event = {};
+		///event.id = BMS_SND_ACTION_FROM_PLATFORM_ID;
+		//event.param1 = turnOffBms;
+		// LSAPI_OSI_EvnetSend(bms_thread_event, &event);
 	}
 	if(turnOffTracker)
 	{
-		LSAPI_SYS_PowerOff(); 
+		//LSAPI_SYS_PowerOff(); 
 	}	
 
 	return 0;
@@ -796,6 +848,7 @@ int16_t OTA_info_check(uint8_t * line, uint8_t * check_line)
 }
 
 LSAPI_OSI_Thread_t*bms_http_fota = NULL;
+uint8_t ota_pac_md5[64] = {0};
 void bms_fotaEntry(void *param)
 {
 
@@ -962,11 +1015,21 @@ void bms_fotaEntry(void *param)
         fd = -1;
 
     }
+	uint8_t md5_ptr[32] = {0};
+	memset(md5_ptr,0,32);
+	lsapi_file_md5(FUPDATE_PACK_FILE_NAME,md5_ptr);
+	LSAPI_Log_Debug("LSAPI_FOTA_Upgrade: md5 check is %s\n",md5_ptr);
+	if(strncasecmp(ota_pac_md5,md5_ptr,32))
+	{
+		LSAPI_Log_Debug("LSAPI_FOTA_Upgrade: md5 check fail");
+		LSAPI_OSI_ThreadExit();
+	}
 #if 1
     LSAPI_Log_Debug("LSAPI_FOTA_Upgrade: start\n");
     if (!fupdateSetReady(NULL))
     {
         LSAPI_Log_Debug("LSAPI_FOTA_Upgrade: invalid pack\n");
+		LSAPI_OSI_ThreadExit();
     }
     else
     {
@@ -1022,10 +1085,11 @@ int bms_tracker_ota_from_platform(char *payload,int len)
 	uint8_t ota_pac_hardwareVersion[64] = {0};
 	uint8_t ota_pac_softwareVersion[64] = {0};
 	uint8_t ota_pac_url[64] = {0};
-	uint8_t ota_pac_md5[64] = {0};
+	
 	int32_t ota_pac_size = 0;
 	bool status = false;
 	LSAPI_OSI_Event_t event = {};
+	
 	LSAPI_Log_Debug("bms_tracker_ota_from_platform payload is %s",payload); 
 	LSAPI_Log_Debug("bms_tracker_ota_from_platform payload len is %d",len); 
 
@@ -1048,40 +1112,39 @@ int bms_tracker_ota_from_platform(char *payload,int len)
 	strncpy(thingId,msg.header.thingId,64);
 	code = msg.code;
 
-	if (strcmp(msg.data.type_url, "type.googleapis.com/FirmwareInfo") == 0)
+	if (strcmp(msg.data.type_url, "type.googleapis.com/OtaAction") == 0)
     {
-        FirmwareInfo pbdata = FirmwareInfo_init_zero;
+        OtaAction pbdata = OtaAction_init_zero;
         is = pb_istream_from_buffer(msg.data.value.bytes, msg.data.value.size);
-        status = pb_decode(&is, FirmwareInfo_fields, &pbdata);
-		strncpy(ota_pac_hardwareVersion,pbdata.hardwareVersion,64);
-		strncpy(ota_pac_softwareVersion,pbdata.softwareVersion,64);
-		strncpy(ota_pac_manufacture,pbdata.manufacture,64);
-		strncpy(ota_pac_model,pbdata.model,64);
-		strncpy(ota_pac_url,pbdata.url,64);
-		strncpy(ota_pac_md5,pbdata.md5,64);
-		ota_pac_size = pbdata.size;
+        status = pb_decode(&is, OtaAction_fields, &pbdata);
+		strncpy(ota_pac_hardwareVersion,pbdata.trackerOTA.hardwareVersion,64);
+		strncpy(ota_pac_softwareVersion,pbdata.trackerOTA.softwareVersion,64);
+		strncpy(ota_pac_manufacture,pbdata.trackerOTA.manufacture,64);
+		strncpy(ota_pac_model,pbdata.trackerOTA.model,64);
+		strncpy(ota_pac_url,pbdata.trackerOTA.url,64);
+		strncpy(ota_pac_md5,pbdata.trackerOTA.md5,64);
+		ota_pac_size = pbdata.trackerOTA.size;
     }
 	
 	LSAPI_Log_Debug("bms_tracker_ota_from_platform ota url is %s,size is %d", ota_pac_url,ota_pac_size);
 	LSAPI_Log_Debug("bms_tracker_ota_from_platform ota supprot manufacture is %s,model is %s", ota_pac_manufacture,ota_pac_model);
 	LSAPI_Log_Debug("bms_tracker_ota_from_platform ota supprot hardwareVersion is %s,softwareVersion is %s", ota_pac_hardwareVersion,ota_pac_softwareVersion);
 
+
+	OTA_url_get(ota_pac_url);
 	
 	event.id = BMS_MQTT_PUB_TRACKER_OTA_REPLY_ID;
 	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
-	
 	if(!OTA_info_check(ota_pac_hardwareVersion,tacker_base_message->trackerHardwareVersion) && 
 		!OTA_info_check(ota_pac_softwareVersion,tacker_base_message->trackerSoftwareVersion) && 
 		!OTA_info_check(ota_pac_model,tacker_base_message->model) && 
 		!OTA_info_check(ota_pac_manufacture,tacker_base_message->manufacture))
 	{
-		LSAPI_Log_Debug("bms_tracker_ota_from_platform ota info check success");
+		LSAPI_Log_Debug("bms_tracker_ota_from_platform ota info check success");		
+		tracker_ota_start();
 	}
 	else
 		LSAPI_Log_Debug("bms_tracker_ota_from_platform ota info check error");
-	OTA_url_get(ota_pac_url);
-
-	tracker_ota_start();
 	return 0;
 }
 
@@ -1268,7 +1331,7 @@ int bms_post_ota_to_tracker_for_test(void)
 	strcpy(tarckerOta.hardwareVersion,"0013!0012!0011");
 	strcpy(tarckerOta.softwareVersion,"0013!0012!0011");
 	strcpy(tarckerOta.url,"http://117.131.85.142:60031/output.pac!192.168.1.1");
-	strcpy(tarckerOta.md5,"1232423453254356436456456457657567");
+	strcpy(tarckerOta.md5,"4baba750130029b21cb7d158096a36e4");
 	tarckerOta.size = 200;
 	strncpy(msg.data.type_url,"type.googleapis.com/FirmwareInfo", sizeof(msg.data.type_url));
 
@@ -1309,6 +1372,7 @@ int bms_post_ota_to_tracker_for_test(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_SUB_TOPIC_TRACKER_OTA);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 	return 0;
 }
 
@@ -1371,12 +1435,13 @@ int bms_post_ota_reply_to_platform(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_OTA_INFO);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 
 	return 0;
 }
 
 
-int bms_post_cellbat_info_to_platform(void)
+int bms_post_cellbat_info_to_platform(int64_t value)
 {
 	char stream_buf[500] = {0};
 	size_t stream_size = 1024;
@@ -1395,9 +1460,10 @@ int bms_post_cellbat_info_to_platform(void)
 	//LSAPI_Log_Debug("bms_post_cellbat_info_to_platform timestamp is %lld,code is %d\n", tacker_base_message->timestamp,tacker_base_message->code);
 
 	strcpy(msg.header.thingId,"tracker001");
-	msg.header.timestamp = LSAPI_OSI_EpochTime();
-	msg.code = 200;
-	
+	msg.header.timestamp = value;
+	msg.code = 0;
+
+	LSAPI_Log_Debug("bms_post_cellbat_info_to_platform timestamp is %lld\n", msg.header.timestamp);
 	strncpy(msg.data.type_url,"type.googleapis.com/BatInfo", sizeof(msg.data.type_url));
 	batinfo.cellVol_count = 16;
 	for(cnt = 0;cnt < 16; cnt++)
@@ -1454,11 +1520,12 @@ int bms_post_cellbat_info_to_platform(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_BAT_INFO);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 
 	return 0;
 }
 
-int bms_post_realtime_info_to_platform(void)
+int bms_post_realtime_info_to_platform(int64_t value)
 {
 	char stream_buf[500] = {0};
 	size_t stream_size = 1024;
@@ -1474,7 +1541,7 @@ int bms_post_realtime_info_to_platform(void)
 	MeassageData msg = MeassageData_init_zero;
 	TrackerRealTimeInfo trackrealtimeinfo = TrackerRealTimeInfo_init_zero;
 
-	msg.header.timestamp = LSAPI_OSI_EpochTime();
+	msg.header.timestamp = value;
 	strcpy(msg.header.thingId,tacker_base_message->thingId);
 	msg.code = 0;
 
@@ -1574,6 +1641,7 @@ int bms_post_realtime_info_to_platform(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_REALTIME_INFO);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 
 	return 0;
 }
@@ -1675,6 +1743,7 @@ int bms_post_safe_event_to_paltfrom(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_EVENT_INFO);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 	return 0;
 }
 
@@ -1691,6 +1760,7 @@ int bms_post_reply_to_platform(int32_t reply_topic)
 	memset(stream_buf,0x00,500);
 	memset(payload_buf,0x00,512);
 
+	LSAPI_Log_Debug("bms_post_reply_to_platform reply_topic is: %d\n",reply_topic);
 	MeassageData msg = MeassageData_init_zero;
 
 	msg.header.timestamp = LSAPI_OSI_EpochTime();
@@ -1731,18 +1801,39 @@ int bms_post_reply_to_platform(int32_t reply_topic)
 			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_LIBSAFE_OTA_REPLY);
 			LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 			LSAPI_MQTT_PUB(1);
+			LSAPI_OSI_ThreadSleep(200);
 		}
+		break;
 		case BMS_MQTT_PUB_TRACKER_OTA_REPLY_ID:
 		{
 			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_TRACKER_OTA_REPLY);
 			LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 			LSAPI_MQTT_PUB(1);
+			LSAPI_OSI_ThreadSleep(200);
 		}
-		case BMS_MQTT_PUB_OPERATION_REPLY_ID:
+		break;
+		case BMS_MQTT_PUB_BMS_OPERATION_REPLY_ID:
 		{
-			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_OPERATION_REPLY);
+			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_BMS_OPERATION_REPLY);
 			LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 			LSAPI_MQTT_PUB(1);
+			LSAPI_OSI_ThreadSleep(200);
+		}
+		break;
+		case BMS_MQTT_PUB_TRACKER_OPERATION_REPLY_ID:
+		{
+			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_TRACKER_OPERATION_REPLY);
+			LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
+			LSAPI_MQTT_PUB(1);
+			LSAPI_OSI_ThreadSleep(200);
+		}
+		break;
+		case BMS_MQTT_PUB_QUERY_REPLY_ID:
+		{
+			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_QUERY_REPLY);
+			LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
+			LSAPI_MQTT_PUB(1);
+			LSAPI_OSI_ThreadSleep(200);
 		}
 		break;
 		default:
@@ -1817,6 +1908,7 @@ int bms_post_baseinfo_to_platform(void)
 	LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_BASE_INFO);
 	LSAPI_MQTT_CFG2("message",payload_buf,total_encrpt_length + 2 + 4);
 	LSAPI_MQTT_PUB(1);
+	LSAPI_OSI_ThreadSleep(200);
 	
 	return 0;
 }
@@ -1930,6 +2022,7 @@ void bms_MqttEntry(void *param)
 
 				    }
 				}
+#if 0
 				if(bms_batinfo_timer_t == NULL)
 				{
 					bms_batinfo_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_batinfo_timer_callback, NULL);
@@ -1940,10 +2033,11 @@ void bms_MqttEntry(void *param)
 
 				    }
 				}
+#endif
 				if(bms_safeevent_timer_t == NULL)
 				{
 					bms_safeevent_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_safe_event_timer_callback, NULL);
-					if(LSAPI_OSI_TimerStart(bms_safeevent_timer_t, 1000) == FALSE)
+					if(LSAPI_OSI_TimerStart(bms_safeevent_timer_t, 10000) == FALSE)
 				    {
 				        LSAPI_Log_Debug("timer start failed\n");
 				        LSAPI_OSI_ThreadExit();
@@ -1977,13 +2071,13 @@ void bms_MqttEntry(void *param)
 					if((base_info_cnt == 0) && (cnt >= 10))
 					{
 						bms_post_baseinfo_to_platform();
+						g_mqtt_tracker_init_flag = 1;
 						LSAPI_OSI_ThreadSleep(200);
-						bms_post_ota_to_tracker_for_test();
+						//bms_post_ota_to_tracker_for_test();
 						base_info_cnt = 1;
 					}
 				}
-				
-				
+								
 			}
 			break;
 	        case MENU_MQTT_CLOSE_RSP:
@@ -2011,9 +2105,11 @@ void bms_MqttEntry(void *param)
 	            break;
 			case BMS_MQTT_PUB_BATINFO_INFO_ID:
 			{
+#if 0
 				LSAPI_OSI_TimerStop(bms_batinfo_timer_t);
 				bms_post_cellbat_info_to_platform();
 				LSAPI_OSI_TimerStart(bms_batinfo_timer_t,10000);
+#endif
 			}
 			break;
 			case BMS_MQTT_PUB_SAFE_EVENT_INFO_ID:
@@ -2025,16 +2121,25 @@ void bms_MqttEntry(void *param)
 			break;
 			case BMS_MQTT_PUB_REALTIME_INFO_ID:
 				{
+					int64_t timestamp = LSAPI_OSI_EpochTime();
 					LSAPI_OSI_TimerStop(bms_realtime_timer_t);
-					bms_post_realtime_info_to_platform();
+					bms_post_realtime_info_to_platform(timestamp);
+					LSAPI_OSI_ThreadSleep(200);
+					bms_post_cellbat_info_to_platform(timestamp);
 					LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
 				}
 				break;
 			case BMS_MQTT_PUB_LIBSAFE_OTA_REPLY_ID:
 			case BMS_MQTT_PUB_TRACKER_OTA_REPLY_ID:
-			case BMS_MQTT_PUB_OPERATION_REPLY_ID:
-			{				
+			case BMS_MQTT_PUB_BMS_OPERATION_REPLY_ID:
+			case BMS_MQTT_PUB_TRACKER_OPERATION_REPLY_ID:
+			case BMS_MQTT_PUB_QUERY_REPLY_ID:
+			{	
+				if(bms_safeevent_timer_t != NULL)
+					LSAPI_OSI_TimerStop(bms_safeevent_timer_t);
 				bms_post_reply_to_platform(event.id);
+				if(bms_safeevent_timer_t != NULL)
+					LSAPI_OSI_TimerStart(bms_safeevent_timer_t,1000);
 			}
 			break;
 			case BMS_MQTT_PUB_OTA_RESULT_ID:
@@ -2047,36 +2152,40 @@ void bms_MqttEntry(void *param)
 		        LSAPI_Log_Debug("MQTT_DOWNLINK_MSG: %s\n", event.param1);
 				LSAPI_Log_Debug("MQTT_DOWNLINK_MSG topic len is: %d\n", event.param2);
 				LSAPI_Log_Debug("MQTT_DOWNLINK_MSG payload len is: %d\n", event.param3);
-				char *payload_buff = NULL;
-				uint32_t topic_len = event.param2;
-				uint32_t payload_len = event.param3;
-				uint32_t msg_len = topic_len + payload_len;
-				payload_buff = (char *)LSAPI_OSI_Malloc(msg_len + 1);
-				if(payload_buff == NULL)
+				if(g_mqtt_tracker_init_flag == 1)
 				{
-					LSAPI_Log_Debug("\n\r MQTT_DOWNLINK_MSG: buf malloc errpr \n");
-				}
-				else
-				{
-					uint16_t cnt = 0;
-					memcpy(payload_buff,event.param1,msg_len);
-
-					for(cnt = 0; cnt < BMS_SUB_TABLE_MAX; cnt++)
+					char *payload_buff = NULL;
+					uint32_t topic_len = event.param2;
+					uint32_t payload_len = event.param3;
+					uint32_t msg_len = topic_len + payload_len;
+					payload_buff = (char *)LSAPI_OSI_Malloc(msg_len + 1);
+					if(payload_buff == NULL)
 					{
-						if(!strncmp(payload_buff,bms_mqtt_sub_table[cnt].topic,topic_len) && (bms_mqtt_sub_table[cnt].parse_func != NULL ))
+						LSAPI_Log_Debug("\n\r MQTT_DOWNLINK_MSG: buf malloc errpr \n");
+					}
+					else
+					{
+						uint16_t cnt = 0;
+						memcpy(payload_buff,event.param1,msg_len);
+
+						for(cnt = 0; cnt < BMS_SUB_TABLE_MAX; cnt++)
 						{
-							bms_mqtt_sub_table[cnt].parse_func(payload_buff + topic_len,payload_len);
-							break;
+							if(!strncmp(payload_buff,bms_mqtt_sub_table[cnt].topic,topic_len) && (bms_mqtt_sub_table[cnt].parse_func != NULL ))
+							{
+								bms_mqtt_sub_table[cnt].parse_func(payload_buff + topic_len,payload_len);
+								break;
+							}
 						}
+					}
+					if(payload_buff != NULL)
+					{
+						free(payload_buff);
+						payload_buff = NULL;
 					}
 				}
 		        if (NULL != (void *)event.param1)
 		            free((void *)event.param1);
-				if(payload_buff != NULL)
-				{
-					free(payload_buff);
-					payload_buff = NULL;
-				}
+				
 				break;
 			}
 	        default:

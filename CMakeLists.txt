@@ -55,6 +55,9 @@ if(CONFIG_APPIMG_LOAD_FLASH)
             cfg-image -i APPIMG -a ${CONFIG_APPIMG_FLASH_ADDRESS}
                 -s ${CONFIG_APPIMG_FLASH_SIZE}
                 -p ${target_img_file}
+			cfg-image -i APPIMG2 -a ${CONFIG_APPIMG2_FLASH_ADDRESS}
+                -s ${CONFIG_APPIMG2_FLASH_SIZE}
+                -p ${target_img_file}
             pac-gen ${pac_file}
         DEPENDS ${pacgen_py} ${target_img_file}
         WORKING_DIRECTORY ${SOURCE_TOP_DIR}
