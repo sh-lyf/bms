@@ -33,11 +33,13 @@
 
 LSAPI_OSI_Thread_t *bms_mqtt_threadid = NULL;
 
-BMS_BASIC_INFO_T *tacker_base_message = NULL;
-BMS_BASIC_INFO_T *tacker_base_init = NULL;
+BMS_BASIC_INFO_T tacker_base_message = {0};
+
 LSAPI_OSI_Timer_t *bms_realtime_timer_t = NULL;
 //LSAPI_OSI_Timer_t *bms_batinfo_timer_t = NULL;
 LSAPI_OSI_Timer_t *bms_safeevent_timer_t = NULL;
+
+LSAPI_OSI_Mutex_t *bms_mqtt_pub_sub_mutex = NULL;
 
 BMS_REALTIME_INFO_T tracker_realtime_info = {{0},{0}};
 Bat_info_t bms_cell_bat_info = {{0},{0}};
@@ -46,7 +48,6 @@ char tracker_ota_url_1[64] = {0};
 char tracker_ota_url_2[64] = {0};
 char *key = "LibSafeAesKeys22";
 
-uint8_t g_mqtt_tracker_init_flag = 0;
 
 #define BMS_TRACKER_MQTT_SUB_TOPIC_BASE_INFO_REPLY "/test/tracker001/tracker/info/base/post_reply"
 #define BMS_TRACKER_MQTT_SUB_TOPIC_REALTIME_INFO_REPLY "/test/tracker001/tracker/info/realtime/post_reply"
@@ -110,10 +111,10 @@ BMS_MQTT_SUB_TOPIC_T bms_mqtt_sub_table[BMS_SUB_TABLE_MAX] =
 	{BMS_TRACKER_MQTT_SUB_TOPIC_CONFIG_INFO_REPLY,bms_baseinfo_replay_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_OTA_INFO_REPLY,bms_baseinfo_replay_from_platform,0},
 
-	{BMS_TRACKER_MQTT_SUB_TOPIC_QUERY,bms_tracker_query_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_TRACKER_OTA,bms_tracker_ota_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_BMS_OPERATION,bms_bms_action_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_TRACKER_OPERATION,bms_tracker_action_from_platform,0},
+	{BMS_TRACKER_MQTT_SUB_TOPIC_QUERY,bms_tracker_query_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_LIBSAFE_OTA,NULL,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_CONFIG,NULL,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_EXTRA,NULL,0}
@@ -172,158 +173,32 @@ int get_tracker_base_info(void)
 {
 	int i_op_status = -1;
 
-	if(tacker_base_message != NULL)
-	{
-		return i_op_status;
-	}
-
-	tacker_base_message = (BMS_BASIC_INFO_T *)LSAPI_OSI_Malloc(sizeof(BMS_BASIC_INFO_T));
-	if(tacker_base_message == NULL)
-		return i_op_status;
-
-	tacker_base_message->thingId = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->thingId == NULL)
-	{
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-
-	tacker_base_message->model = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->model == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-	tacker_base_message->manufacture = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->manufacture == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-	tacker_base_message->imei = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->imei == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message->manufacture);
-		tacker_base_message->manufacture = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-
-	tacker_base_message->imsi = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->imsi == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message->manufacture);
-		tacker_base_message->manufacture = NULL;
-		free(tacker_base_message->imei);
-		tacker_base_message->imei = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-	tacker_base_message->mobile = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->mobile == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message->manufacture);
-		tacker_base_message->manufacture = NULL;
-		free(tacker_base_message->imei);
-		tacker_base_message->imei = NULL;
-		free(tacker_base_message->imsi);
-		tacker_base_message->imsi = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-	tacker_base_message->trackerHardwareVersion = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->trackerHardwareVersion == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message->manufacture);
-		tacker_base_message->manufacture = NULL;
-		free(tacker_base_message->imei);
-		tacker_base_message->imei = NULL;
-		free(tacker_base_message->imsi);
-		tacker_base_message->imsi = NULL;
-		free(tacker_base_message->mobile);
-		tacker_base_message->mobile = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
+	memset(tacker_base_message.imei,0x00,64);
+	memset(tacker_base_message.mobile,0x00,64);
+	memset(tacker_base_message.imsi,0x00,64);
+	memset(tacker_base_message.manufacture,0x00,64);
+	memset(tacker_base_message.model,0x00,64);
+	memset(tacker_base_message.thingId,0x00,64);
+	memset(tacker_base_message.trackerHardwareVersion,0x00,64);
+	memset(tacker_base_message.trackerSoftwareVersion,0x00,64);
 	
-	tacker_base_message->trackerSoftwareVersion = (char *)LSAPI_OSI_Malloc(64);
-	if(tacker_base_message->trackerSoftwareVersion == NULL)
-	{
-		free(tacker_base_message->thingId);
-		tacker_base_message->thingId = NULL;
-		free(tacker_base_message->model);
-		tacker_base_message->model = NULL;
-		free(tacker_base_message->manufacture);
-		tacker_base_message->manufacture = NULL;
-		free(tacker_base_message->imei);
-		tacker_base_message->imei = NULL;
-		free(tacker_base_message->imsi);
-		tacker_base_message->imsi = NULL;
-		free(tacker_base_message->mobile);
-		tacker_base_message->mobile = NULL;
-		free(tacker_base_message->trackerHardwareVersion);
-		tacker_base_message->trackerHardwareVersion = NULL;
-		free(tacker_base_message);
-		tacker_base_message = NULL;
-		return i_op_status;
-	}
-	memset(tacker_base_message->imei,0x00,64);
-	memset(tacker_base_message->mobile,0x00,64);
-	memset(tacker_base_message->imsi,0x00,64);
-	memset(tacker_base_message->manufacture,0x00,64);
-	memset(tacker_base_message->model,0x00,64);
-	memset(tacker_base_message->thingId,0x00,64);
-	memset(tacker_base_message->trackerHardwareVersion,0x00,64);
-	memset(tacker_base_message->trackerSoftwareVersion,0x00,64);
+	LSAPI_SIM_GetIMEI(tacker_base_message.imei);
+	LSAPI_Log_Debug("get_tracker_base_info imei is =%s\n", tacker_base_message.imei);
+	LSAPI_SIM_GetICCID(tacker_base_message.mobile);
+	LSAPI_Log_Debug("get_tracker_base_info mobile is =%s\n", tacker_base_message.mobile);
+	LSAPI_SIM_GetIMSI(tacker_base_message.imsi);
+	LSAPI_Log_Debug("get_tracker_base_info imsi is =%s\n", tacker_base_message.imsi);
+	strcpy(tacker_base_message.manufacture,"ZG_BMS");
+	LSAPI_Log_Debug("get_tracker_base_info manufacture is =%s\n", tacker_base_message.manufacture);
+	strcpy(tacker_base_message.model,"tracker");
+	LSAPI_Log_Debug("get_tracker_base_info model is =%s\n", tacker_base_message.model);
+	strcpy(tacker_base_message.thingId,"tracker001");
+	LSAPI_Log_Debug("get_tracker_base_info thingId is =%s\n", tacker_base_message.thingId);
+	strcpy(tacker_base_message.trackerHardwareVersion,"0011");
+	LSAPI_Log_Debug("get_tracker_base_info trackerHardwareVersion is =%s\n", tacker_base_message.trackerHardwareVersion);
+	strcpy(tacker_base_message.trackerSoftwareVersion,"0011");
+	LSAPI_Log_Debug("get_tracker_base_info trackerSoftwareVersion is =%s\n", tacker_base_message.trackerSoftwareVersion);
 	
-	LSAPI_SIM_GetIMEI(tacker_base_message->imei);
-	LSAPI_Log_Debug("get_tracker_base_info imei is =%s\n", tacker_base_message->imei);
-	LSAPI_SIM_GetICCID(tacker_base_message->mobile);
-	LSAPI_Log_Debug("get_tracker_base_info mobile is =%s\n", tacker_base_message->mobile);
-	LSAPI_SIM_GetIMSI(tacker_base_message->imsi);
-	LSAPI_Log_Debug("get_tracker_base_info imsi is =%s\n", tacker_base_message->imsi);
-	strcpy(tacker_base_message->manufacture,"ZG_BMS");
-	LSAPI_Log_Debug("get_tracker_base_info manufacture is =%s\n", tacker_base_message->manufacture);
-	strcpy(tacker_base_message->model,"tracker");
-	LSAPI_Log_Debug("get_tracker_base_info model is =%s\n", tacker_base_message->model);
-	strcpy(tacker_base_message->thingId,"tracker001");
-	LSAPI_Log_Debug("get_tracker_base_info thingId is =%s\n", tacker_base_message->thingId);
-	strcpy(tacker_base_message->trackerHardwareVersion,"0011");
-	LSAPI_Log_Debug("get_tracker_base_info trackerHardwareVersion is =%s\n", tacker_base_message->trackerHardwareVersion);
-	strcpy(tacker_base_message->trackerSoftwareVersion,"0011");
-	LSAPI_Log_Debug("get_tracker_base_info trackerSoftwareVersion is =%s\n", tacker_base_message->trackerSoftwareVersion);
-	tacker_base_message->timestamp = LSAPI_OSI_EpochTime();
-	LSAPI_Log_Debug("get_tracker_base_info timestamp is =%d\n", tacker_base_message->timestamp);
-
 	return 0;
 }
 
@@ -434,10 +309,12 @@ int32_t bms_payload_encrypte(const char *src,char *dest,uint16_t size)
               return 0;  
            }
      }
+#if 0
 	for(cnt = 0;cnt < total_encrpt_length;cnt ++)
 	{
 		LSAPI_Log_Debug("payload_encrypt_buf[%d]=%02x",cnt,encrypt_buf[cnt]);
-	} 
+	}
+#endif
 	return total_encrpt_length;
 }
 
@@ -507,6 +384,9 @@ int bms_tracker_query_from_platform(char *payload,int len)
 	bool status = false;
 
 	LSAPI_OSI_Event_t event = {};
+
+	event.id = BMS_MQTT_PUB_QUERY_REPLY_ID;
+	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	
 	LSAPI_Log_Debug("bms_tracker_query_from_platform payload is %s",payload); 
 	LSAPI_Log_Debug("bms_tracker_query_from_platform payload len is %d",len); 
@@ -544,49 +424,16 @@ int bms_tracker_query_from_platform(char *payload,int len)
 	LSAPI_Log_Debug("bms_tracker_query_from_platform ota base is %d,realtime is %d,log is %d,config is %d,bat is %d", 
 		base,realtime,log,config,bat);
 
-	if(base || realtime || bat)
+	if(base)
 	{
-		int64_t timestamp = LSAPI_OSI_EpochTime(); 
-		if(bms_safeevent_timer_t != NULL)
-			LSAPI_OSI_TimerStop(bms_safeevent_timer_t);
-		if(base)
-		{
-			bms_post_baseinfo_to_platform();
-			LSAPI_OSI_ThreadSleep(200);
-		}
-		if(realtime)
-		{
-			if(bms_realtime_timer_t != NULL)
-			{
-				LSAPI_OSI_TimerStop(bms_realtime_timer_t);
-				bms_post_realtime_info_to_platform(timestamp);
-				LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
-			}
-			else
-				bms_post_realtime_info_to_platform(timestamp);
-			LSAPI_OSI_ThreadSleep(200);
-		}
-		if(bat)
-		{
-			if(bms_realtime_timer_t != NULL)
-			{
-				LSAPI_OSI_TimerStop(bms_realtime_timer_t);
-				bms_post_cellbat_info_to_platform(timestamp);
-				LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
-			}
-			else
-			{
-				bms_post_cellbat_info_to_platform(timestamp);
-			}
-			LSAPI_OSI_ThreadSleep(200);
-		}
-		if(bms_safeevent_timer_t != NULL)
-			LSAPI_OSI_TimerStart(bms_safeevent_timer_t,1000);
+		event.id = BMS_MQTT_PUB_BASE_INFO_ID;
+		LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	}
 
-	event.id = BMS_MQTT_PUB_QUERY_REPLY_ID;
+	event.id = BMS_MQTT_PUB_REALTIME_INFO_ID;
+	event.param1 = realtime;
+	event.param2 = bat;
 	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
-	
 	return 0;
 }
 
@@ -1135,10 +982,10 @@ int bms_tracker_ota_from_platform(char *payload,int len)
 	
 	event.id = BMS_MQTT_PUB_TRACKER_OTA_REPLY_ID;
 	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
-	if(!OTA_info_check(ota_pac_hardwareVersion,tacker_base_message->trackerHardwareVersion) && 
-		!OTA_info_check(ota_pac_softwareVersion,tacker_base_message->trackerSoftwareVersion) && 
-		!OTA_info_check(ota_pac_model,tacker_base_message->model) && 
-		!OTA_info_check(ota_pac_manufacture,tacker_base_message->manufacture))
+	if(!OTA_info_check(ota_pac_hardwareVersion,tacker_base_message.trackerHardwareVersion) && 
+		!OTA_info_check(ota_pac_softwareVersion,tacker_base_message.trackerSoftwareVersion) && 
+		!OTA_info_check(ota_pac_model,tacker_base_message.model) && 
+		!OTA_info_check(ota_pac_manufacture,tacker_base_message.manufacture))
 	{
 		LSAPI_Log_Debug("bms_tracker_ota_from_platform ota info check success");		
 		tracker_ota_start();
@@ -1323,7 +1170,7 @@ int bms_post_ota_to_tracker_for_test(void)
 	FirmwareInfo tarckerOta = FirmwareInfo_init_zero;
 	
 	msg.header.timestamp = LSAPI_OSI_EpochTime();
-	strcpy(msg.header.thingId,tacker_base_message->thingId);
+	strcpy(msg.header.thingId,tacker_base_message.thingId);
 	msg.code = 200;
 	
 	strcpy(tarckerOta.model,"DTU!tracker!sensor");
@@ -1457,8 +1304,6 @@ int bms_post_cellbat_info_to_platform(int64_t value)
 	MeassageData msg = MeassageData_init_zero;
 	BatInfo batinfo = BatInfo_init_zero;
 
-	//LSAPI_Log_Debug("bms_post_cellbat_info_to_platform timestamp is %lld,code is %d\n", tacker_base_message->timestamp,tacker_base_message->code);
-
 	strcpy(msg.header.thingId,"tracker001");
 	msg.header.timestamp = value;
 	msg.code = 0;
@@ -1542,7 +1387,7 @@ int bms_post_realtime_info_to_platform(int64_t value)
 	TrackerRealTimeInfo trackrealtimeinfo = TrackerRealTimeInfo_init_zero;
 
 	msg.header.timestamp = value;
-	strcpy(msg.header.thingId,tacker_base_message->thingId);
+	strcpy(msg.header.thingId,tacker_base_message.thingId);
 	msg.code = 0;
 
 	LSAPI_Log_Debug("bms_post_realtime_info_to_platform timestamp is %lld\n", msg.header.timestamp);
@@ -1602,8 +1447,8 @@ int bms_post_realtime_info_to_platform(int64_t value)
 	trackrealtimeinfo.gpsLocationInfo.locationMode = 0;
 	trackrealtimeinfo.gpsLocationInfo.networkType = 4;
 	trackrealtimeinfo.gpsLocationInfo.csq = 31;
-	trackrealtimeinfo.gpsLocationInfo.detStatus = 0;
-	trackrealtimeinfo.gpsLocationInfo.reportReason = 0;
+	trackrealtimeinfo.gpsLocationInfo.detStatus = 0;//
+	trackrealtimeinfo.gpsLocationInfo.reportReason = 1;
 #endif
 	//msg.data.has_value = true;
 	//msg.data.has_type_url = true;
@@ -1667,7 +1512,7 @@ int bms_post_safe_event_to_paltfrom(void)
 	BatterySafeEvent *pbs = &(eventRequestData.batterySafeEvent);
 	
 	msg.header.timestamp = LSAPI_OSI_EpochTime();
-	strcpy(msg.header.thingId,tacker_base_message->thingId);
+	strcpy(msg.header.thingId,tacker_base_message.thingId);
 	msg.code = 200;
 	
 #if 1
@@ -1760,11 +1605,11 @@ int bms_post_reply_to_platform(int32_t reply_topic)
 	memset(stream_buf,0x00,500);
 	memset(payload_buf,0x00,512);
 
-	LSAPI_Log_Debug("bms_post_reply_to_platform reply_topic is: %d\n",reply_topic);
+	LSAPI_Log_Debug("bms_post_reply_to_platform reply_topic is: %06x\n",reply_topic);
 	MeassageData msg = MeassageData_init_zero;
 
 	msg.header.timestamp = LSAPI_OSI_EpochTime();
-	strcpy(msg.header.thingId,tacker_base_message->thingId);
+	strcpy(msg.header.thingId,tacker_base_message.thingId);
 	msg.code = 200;
 		
 	pb_ostream_t stream = pb_ostream_from_buffer(stream_buf, sizeof(stream_buf));
@@ -1795,7 +1640,7 @@ int bms_post_reply_to_platform(int32_t reply_topic)
 
 	switch(reply_topic)
 	{
-		LSAPI_Log_Debug("bms_post_reply_to_platform default topic is %d ",reply_topic);
+		LSAPI_Log_Debug("bms_post_reply_to_platform default topic is %08x ",reply_topic);
 		case BMS_MQTT_PUB_LIBSAFE_OTA_REPLY_ID:
 		{
 			LSAPI_MQTT_CFG("topic",BMS_TRACKER_MQTT_PUB_TOPIC_LIBSAFE_OTA_REPLY);
@@ -1859,16 +1704,16 @@ int bms_post_baseinfo_to_platform(void)
 	TrackerBaseInfo trackbaseinfo = TrackerBaseInfo_init_zero;
 
 	msg.header.timestamp = LSAPI_OSI_EpochTime();
-	strcpy(msg.header.thingId,tacker_base_message->thingId);
+	strcpy(msg.header.thingId,tacker_base_message.thingId);
 	msg.code = 200;
 		
-	strcpy(trackbaseinfo.model,tacker_base_message->model);
-	strcpy(trackbaseinfo.manufacture,tacker_base_message->manufacture);
-	strcpy(trackbaseinfo.imei,tacker_base_message->imei);
-	strcpy(trackbaseinfo.imsi,tacker_base_message->imsi);
-	strcpy(trackbaseinfo.mobile,tacker_base_message->mobile);
-	strcpy(trackbaseinfo.trackerHardwareVersion,tacker_base_message->trackerHardwareVersion);
-	strcpy(trackbaseinfo.trackerSoftwareVersion,tacker_base_message->trackerSoftwareVersion);
+	strcpy(trackbaseinfo.model,tacker_base_message.model);
+	strcpy(trackbaseinfo.manufacture,tacker_base_message.manufacture);
+	strcpy(trackbaseinfo.imei,tacker_base_message.imei);
+	strcpy(trackbaseinfo.imsi,tacker_base_message.imsi);
+	strcpy(trackbaseinfo.mobile,tacker_base_message.mobile);
+	strcpy(trackbaseinfo.trackerHardwareVersion,tacker_base_message.trackerHardwareVersion);
+	strcpy(trackbaseinfo.trackerSoftwareVersion,tacker_base_message.trackerSoftwareVersion);
 
 	//msg.data.has_value = true;
 	//msg.data.has_type_url = true;
@@ -1920,6 +1765,8 @@ void bms_mqtt_realtime_timer_callback(void *param)
 
 #ifndef REAL_BMS_DEBUG
 	event.id = BMS_MQTT_PUB_REALTIME_INFO_ID;
+	event.param1 = 1;
+	event.param2 = 1;
 	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 #else
 	event.id = BMS_GET_BOARD_DYNAMIC_INFO_ID;
@@ -1966,7 +1813,7 @@ void bms_MqttEntry(void *param)
 {
 	int res = 0;
     LSAPI_Log_Debug("MqttEntry threadid = 0x%x\n",LSAPI_OSI_ThreadCurrent());
-	
+	bms_mqtt_pub_sub_mutex = LSAPI_OSI_MutexCreate();
     LSAPI_MqttRegOpenThread(LSAPI_OSI_ThreadCurrent());
     LSAPI_NET_EventReg(LSAPI_OSI_ThreadCurrent(), BMS_START_MQTT_ID | MENU_MQTT_CONN_RSP | MENU_MQTT_CLOSE_RSP | MENU_MQTT_SUB_RSP |MENU_MQTT_UNSUB_RSP |MENU_MQTT_PUB_RSP |MENU_MQTT_DOWNLINK_MSG | BMS_MQTT_PUB_REALTIME_INFO_ID);
     for(;;)
@@ -2012,6 +1859,7 @@ void bms_MqttEntry(void *param)
 			        LSAPI_Log_Debug("\n\r MQTT_OPEN... fail \n");
 			        return;
 			    }
+
 				if(bms_realtime_timer_t == NULL)
 				{
 					bms_realtime_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_realtime_timer_callback, NULL);
@@ -2048,9 +1896,10 @@ void bms_MqttEntry(void *param)
 			break;
 		    case MENU_MQTT_CONN_RSP:
 	            LSAPI_Log_Debug("MQTT_CONN: %d \n", event.param1);
-
+				
 				if(event.param1 == 1)
 				{
+					bms_post_baseinfo_to_platform();
 					LSAPI_OSI_Event_t event = {};
   					event.id = BMS_MQTT_SUB_INFO_ID;
   					LSAPI_OSI_EvnetSend(LSAPI_OSI_ThreadCurrent(), &event);
@@ -2059,25 +1908,14 @@ void bms_MqttEntry(void *param)
 			case BMS_MQTT_SUB_INFO_ID:
 			{
 			 	static int16_t cnt = 0;
-				static int16_t base_info_cnt = 0;
+
 				if((cnt < 10) && (bms_mqtt_sub_table[cnt].sub_flag == 0))
 				{	
 					LSAPI_MQTT_CFG("topic",bms_mqtt_sub_table[cnt].topic);
 					LSAPI_MQTT_SUB(1);
+					bms_mqtt_sub_table[cnt].sub_flag = 1;
 					cnt++;
-				}
-				else
-				{
-					if((base_info_cnt == 0) && (cnt >= 10))
-					{
-						bms_post_baseinfo_to_platform();
-						g_mqtt_tracker_init_flag = 1;
-						LSAPI_OSI_ThreadSleep(200);
-						//bms_post_ota_to_tracker_for_test();
-						base_info_cnt = 1;
-					}
-				}
-								
+				}								
 			}
 			break;
 	        case MENU_MQTT_CLOSE_RSP:
@@ -2119,13 +1957,26 @@ void bms_MqttEntry(void *param)
 				LSAPI_OSI_TimerStart(bms_safeevent_timer_t,1000);
 			}
 			break;
+			case BMS_MQTT_PUB_BASE_INFO_ID:
+			{
+				bms_post_baseinfo_to_platform();
+			}
+			break;
 			case BMS_MQTT_PUB_REALTIME_INFO_ID:
 				{
 					int64_t timestamp = LSAPI_OSI_EpochTime();
 					LSAPI_OSI_TimerStop(bms_realtime_timer_t);
-					bms_post_realtime_info_to_platform(timestamp);
-					LSAPI_OSI_ThreadSleep(200);
-					bms_post_cellbat_info_to_platform(timestamp);
+					if(event.param1 == 1)
+					{
+						LSAPI_OSI_ThreadSleep(500);
+						bms_post_realtime_info_to_platform(timestamp);
+					}
+					if(event.param2 == 1)
+					{
+						LSAPI_OSI_ThreadSleep(200);
+						bms_post_cellbat_info_to_platform(timestamp);
+					}
+											
 					LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
 				}
 				break;
@@ -2152,37 +2003,36 @@ void bms_MqttEntry(void *param)
 		        LSAPI_Log_Debug("MQTT_DOWNLINK_MSG: %s\n", event.param1);
 				LSAPI_Log_Debug("MQTT_DOWNLINK_MSG topic len is: %d\n", event.param2);
 				LSAPI_Log_Debug("MQTT_DOWNLINK_MSG payload len is: %d\n", event.param3);
-				if(g_mqtt_tracker_init_flag == 1)
-				{
-					char *payload_buff = NULL;
-					uint32_t topic_len = event.param2;
-					uint32_t payload_len = event.param3;
-					uint32_t msg_len = topic_len + payload_len;
-					payload_buff = (char *)LSAPI_OSI_Malloc(msg_len + 1);
-					if(payload_buff == NULL)
-					{
-						LSAPI_Log_Debug("\n\r MQTT_DOWNLINK_MSG: buf malloc errpr \n");
-					}
-					else
-					{
-						uint16_t cnt = 0;
-						memcpy(payload_buff,event.param1,msg_len);
 
-						for(cnt = 0; cnt < BMS_SUB_TABLE_MAX; cnt++)
+				char *payload_buff = NULL;
+				uint32_t topic_len = event.param2;
+				uint32_t payload_len = event.param3;
+				uint32_t msg_len = topic_len + payload_len;
+				payload_buff = (char *)LSAPI_OSI_Malloc(msg_len + 1);
+				if(payload_buff == NULL)
+				{
+					LSAPI_Log_Debug("\n\r MQTT_DOWNLINK_MSG: buf malloc errpr \n");
+				}
+				else
+				{
+					uint16_t cnt = 0;
+					memcpy(payload_buff,event.param1,msg_len);
+
+					for(cnt = 0; cnt < BMS_SUB_TABLE_MAX; cnt++)
+					{
+						if(!strncmp(payload_buff,bms_mqtt_sub_table[cnt].topic,topic_len) && (bms_mqtt_sub_table[cnt].parse_func != NULL ))
 						{
-							if(!strncmp(payload_buff,bms_mqtt_sub_table[cnt].topic,topic_len) && (bms_mqtt_sub_table[cnt].parse_func != NULL ))
-							{
-								bms_mqtt_sub_table[cnt].parse_func(payload_buff + topic_len,payload_len);
-								break;
-							}
+							bms_mqtt_sub_table[cnt].parse_func(payload_buff + topic_len,payload_len);
+							break;
 						}
 					}
-					if(payload_buff != NULL)
-					{
-						free(payload_buff);
-						payload_buff = NULL;
-					}
 				}
+				if(payload_buff != NULL)
+				{
+					free(payload_buff);
+					payload_buff = NULL;
+				}
+
 		        if (NULL != (void *)event.param1)
 		            free((void *)event.param1);
 				
@@ -2191,7 +2041,7 @@ void bms_MqttEntry(void *param)
 	        default:
 				//LSAPI_MENU_Printf("\n\r unknown msg id: %d \n", ev.param1);
 	            break;    
-		}	
+		}
     } 
     LSAPI_OSI_ThreadExit();
 }

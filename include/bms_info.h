@@ -11,16 +11,14 @@ typedef struct _bms_platform_reply_t{
 }BMS_PALTFPRM_REPLY_T;
 
 typedef struct _bms_basic_info_t{
-	char *thingId;
-	int64_t timestamp; 
-	char *model;
-	char *manufacture;
-	char *imei;
-	char *imsi;
-	char *mobile;
-	char *trackerHardwareVersion;
-	char *trackerSoftwareVersion;
-	int32_t code;
+	char thingId[64];
+	char model[64];
+	char manufacture[64];
+	char imei[64];
+	char imsi[64];
+	char mobile[64];
+	char trackerHardwareVersion[64];
+	char trackerSoftwareVersion[64];
 }BMS_BASIC_INFO_T;
 
 typedef struct _bms_battery_info_t{

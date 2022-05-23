@@ -535,10 +535,12 @@ static void bmsRtuTask(void *param)
 		int read_avail_size = LSAPI_Device_ReadAvail(gDeviceUart);
 		if (read_avail_size > 0) 
 		{
+			memset(r_buffer,0,100);
 			int read_size = LSAPI_Device_Read(gDeviceUart, r_buffer, sizeof(r_buffer));
 			if (read_size > 0)
 			{
 				LSAPI_Log_Debug("uart: read: {%s}\n", r_buffer);
+				tracker_recv_data_from_bms(r_buffer,read_size);
 			}
 		}
 		LSAPI_OSI_ThreadSleep(100);
@@ -806,8 +808,8 @@ int appimg_enter(void *param)
 	    
     bms_mqtt_thread = LSAPI_OSI_ThreadCreate("[BMS_MQTT_task]", bms_MqttEntry, NULL, LSAPI_OSI_PRIORITY_ABOVE_NORMAL, 1024*64, 4);
 	bms_tracker_thread = LSAPI_OSI_ThreadCreate("[BMS_Rtu_task]", bmsRtuTask_test, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*4, 4);
-	//bms_gnss_thread = LSAPI_OSI_ThreadCreate("[BMS_Gnss_task]", gnssUartTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
-	//bms_gnss_parser_thread = LSAPI_OSI_ThreadCreate("[Gnss_Parse_task]", gnssParseTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
+	bms_gnss_thread = LSAPI_OSI_ThreadCreate("[BMS_Gnss_task]", gnssUartTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
+	bms_gnss_parser_thread = LSAPI_OSI_ThreadCreate("[Gnss_Parse_task]", gnssParseTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
 	sc7a20_func();
     return 0;
 }
