@@ -1444,10 +1444,10 @@ int bms_post_realtime_info_to_platform(int64_t value)
 	trackrealtimeinfo.gpsLocationInfo.latitude = 2503.71465;
 	trackrealtimeinfo.gpsLocationInfo.longitudeDirection = 0x69;
 	trackrealtimeinfo.gpsLocationInfo.longitude = 12138.73922;
-	trackrealtimeinfo.gpsLocationInfo.locationMode = 0;
-	trackrealtimeinfo.gpsLocationInfo.networkType = 4;
+	trackrealtimeinfo.gpsLocationInfo.locationMode = 1;
+	trackrealtimeinfo.gpsLocationInfo.networkType = 2;
 	trackrealtimeinfo.gpsLocationInfo.csq = 31;
-	trackrealtimeinfo.gpsLocationInfo.detStatus = 0;//
+	trackrealtimeinfo.gpsLocationInfo.detStatus = 1;//
 	trackrealtimeinfo.gpsLocationInfo.reportReason = 1;
 #endif
 	//msg.data.has_value = true;
@@ -1555,10 +1555,12 @@ int bms_post_safe_event_to_paltfrom(void)
 	pb_encode(&stream, EventRequestData_fields, &eventRequestData);
 	
 	msg.data.value.size = stream.bytes_written;
+#if 0
 	for(cnt = 0;cnt < msg.data.value.size; cnt++)
 	{
 		LSAPI_Log_Debug("safe_event[%d]=%02x\n", cnt,msg.data.value.bytes[cnt]);
 	}
+#endif
 	stream = pb_ostream_from_buffer(stream_buf, sizeof(stream_buf));
 	pb_encode(&stream, MeassageData_fields, &msg);
 	
