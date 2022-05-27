@@ -4,6 +4,28 @@
 #include "lsapi_types.h"
 #include "lsapi_os.h"
 
+
+#define EXTRA_OPERATE_MODE 		1
+#define EXTRA_TRANSPORT_MODE 	2
+#define EXTRA_STORAGE_MODE 		3
+#define EXTRA_CHARGE_MODE_1 	4
+#define EXTRA_CHARGE_MODE_2 	5
+#define EXTRA_SEARCH_MODE 		6
+#define EXTRA_FLIGHT_MODE 		7
+
+typedef struct _bms_tracker_mode_judge_info_t{
+	uint8_t charge_mode;
+	bool det_status;
+	uint16_t cur_mode;
+}bms_tracker_mode_judge_info_t;
+
+typedef struct _bms_tracker_mode_info_t{
+	uint16_t mode;
+	uint32_t report_rate_cur;
+	uint32_t time_interval;
+	uint32_t report_rate_last;
+}bms_tracker_mode_info_t;
+
 typedef struct _bms_platform_reply_t{
 	char *thingId;
 	int64_t timestamp; 

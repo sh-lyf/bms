@@ -30,12 +30,18 @@ LSAPI_OSI_Thread_t *bms_mqtt_thread = NULL;
 LSAPI_OSI_Thread_t *bms_tracker_thread = NULL;
 LSAPI_OSI_Thread_t *bms_gnss_thread = NULL;
 LSAPI_OSI_Thread_t *bms_gnss_parser_thread = NULL;
+LSAPI_OSI_Thread_t *tarcker_mode_thread = NULL;
 
 LSAPI_Device_t *gDeviceUart = NULL;
 LSAPI_Device_t *gGnssUart = NULL;
 
 LSAPI_Device_t *gnss_en = NULL;
 LSAPI_Device_t *vrit_at_device = NULL;
+
+LSAPI_Device_t *det_gpio = NULL;
+
+bms_tracker_mode_judge_info_t g_bms_judge_mode_info = {0,false,EXTRA_OPERATE_MODE};
+
 LSAPI_Device_AtDispatch_t *at_dispatch = NULL;
 
 LSAPI_OSI_Pipe_t *at_rx_pipe = NULL;
@@ -71,12 +77,23 @@ uint16_t g_gps_buffer_len = 0;
 
 #define LS_TIME_ZONE_SECOND (15 * 60)
 
+#define BMS_TRACKER_DET_CHECK_GPIO (5)
+
 #define MAX(a, b, c) (a) > (b)? ((a) > (c)? (a) : (c)) : ((b) > (c)? (b):(c)) 
 
 extern BMS_REALTIME_INFO_T tracker_realtime_info;
 extern Bat_info_t bms_cell_bat_info;
 extern void sc7a20_func(void);
 
+static void det_gpio_IntrCB(void *data)
+{
+	if(g_bms_judge_mode_info.cur_mode != EXTRA_SEARCH_MODE)
+	{
+		LSAPI_OSI_Event_t event = {};
+	    event.id = BMS_GET_CHARGE_MODE_ID;
+		LSAPI_OSI_EvnetSend(bms_thread_event, &event);
+	}
+}
 
 int16_t tracker_recv_data_from_bms(uint8_t *recv_data,uint16_t recv_len)
 {
@@ -237,6 +254,79 @@ int16_t tracker_recv_data_from_bms(uint8_t *recv_data,uint16_t recv_len)
 						LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 					}
 					break;
+				case ZG_CMD_RD_CHARGE_MODE_INFO:
+					{
+						uint8_t charge_mode = 0;
+						uint16_t cur_tracker_mode = 0;
+						charge_mode = *(ptr + 8);
+						g_bms_judge_mode_info.charge_mode = charge_mode;
+						
+						cur_tracker_mode = g_bms_judge_mode_info.cur_mode;
+						if(g_bms_judge_mode_info.cur_mode != EXTRA_SEARCH_MODE)
+						{
+							if(charge_mode)
+							{
+								if((charge_mode == 0x01) || (charge_mode == 0x02))
+									g_bms_judge_mode_info.cur_mode = (charge_mode == 0x01 ? EXTRA_CHARGE_MODE_1 : EXTRA_CHARGE_MODE_2);
+							}
+							else
+							{							
+								bool gpioLevel = 0;
+								if(det_gpio != NULL)
+								{
+									 if (1 != LSAPI_Device_Read(det_gpio, (void *)&gpioLevel, 1))
+								    {
+								    	break; 
+								    }
+
+									g_bms_judge_mode_info.det_status = gpioLevel;
+								    if (gpioLevel)
+								    {
+								        g_bms_judge_mode_info.cur_mode = EXTRA_OPERATE_MODE;
+								    } 
+								    else 
+								    {
+								        g_bms_judge_mode_info.cur_mode = EXTRA_STORAGE_MODE;
+										//TODO 
+										//启动定时器，检测gps状态;
+																			
+								    }
+								}
+							   
+							}
+							if(cur_tracker_mode != g_bms_judge_mode_info.cur_mode)
+							{
+								event.id = BMS_MQTT_PUB_BASE_INFO_ID;
+								LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+								
+								event.id = BMS_MQTT_PUB_REALTIME_INFO_ID;
+								event.param1 = 1;
+								event.param2 = 1;
+								LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+							}
+						}						
+					}
+				break;
+				case ZG_CMD_WR_SEARCH_MODE_CTRL:
+					{
+						uint8_t snd_result = 0;
+						snd_result = *(ptr + 8);
+						LSAPI_Log_Debug("tracker_recv_data_from_bms,ZG_CMD_WR_SEARCH_MODE_CTRL,send result is 0x%02x",snd_result);
+					}
+					break;
+				case ZG_CMD_WR_FLIGHT_MODE_CTRL:
+					{
+						uint8_t snd_result = 0;
+						snd_result = *(ptr + 8);
+						LSAPI_OSI_Event_t send_event = {};
+						LSAPI_Log_Debug("tracker_recv_data_from_bms,ZG_CMD_WR_FLIGHT_MODE_CTRL,send result is 0x%02x",snd_result);
+						if(snd_result == 0x03)
+						{
+							send_event.id = BMS_TRACKER_QUIT_FLIGHT_MODE_ID;
+							LSAPI_OSI_EvnetSend(bms_thread_event, &send_event);
+						}
+					}
+					break;
 				default:
 					break;
 					
@@ -363,6 +453,39 @@ int16_t tracker_snd_action_cmd_to_bms(uint8_t cmd,uint8_t action)
 	return 0;
 }
 
+int16_t tracker_snd_mode_cmd_to_bms(uint8_t cmd,uint8_t mode)
+{
+	uint16_t crc_checksum = 0;
+	uint8_t check = 0;
+	uint8_t data[100] = {0x00};
+	uint8_t data_head[2] = {0xFE,0xFE};
+	uint8_t *data_ptr = data;
+	uint8_t cnt = 0;
+	data[0] = 0xAA;
+	data[1] = 0x83;
+	data[2] = 0x29;
+	data[3] = cmd;
+	data[4] = g_base_info.bmsId[0];
+	data[5] = g_base_info.bmsId[1];
+	data[6] = g_base_info.bmsId[2];
+	data[7] = g_base_info.bmsId[3];
+	data[8] = mode;
+
+	crc_checksum = GetCRCCode(data_ptr + 2, 7);
+	
+	data[9] = ((crc_checksum & 0xff00) >> 8);
+	data[10] = (crc_checksum & 0x00ff);
+
+	for(cnt = 2;cnt < 47; cnt++)
+	{
+		check = check^data[cnt];
+	}
+	data[11] = check;
+	LSAPI_Device_Write(gDeviceUart,data_head,2);
+	LSAPI_Device_Write(gDeviceUart,data,12);
+	return 0;
+}
+
 
 void bms_tracker_timer_callback(void *param)
 {
@@ -387,6 +510,32 @@ static void prvVirtAtRespCallback(void *param, unsigned event)
 	}
 }
 
+static void bmsModeTask(void *param)
+{
+	static uint8_t before_mode = 0;
+	LSAPI_OSI_Event_t event = {};
+	for(;;)
+	{
+		if(before_mode != 0 && 
+			g_bms_judge_mode_info.cur_mode != EXTRA_SEARCH_MODE && 
+			g_bms_judge_mode_info.cur_mode != EXTRA_FLIGHT_MODE)
+		{
+			if(before_mode != g_bms_judge_mode_info.cur_mode)
+			{	
+				LSAPI_Log_Debug("bmsModeTask before_mode is %d,current mode is %d", before_mode, g_bms_judge_mode_info.cur_mode);
+			    event.id = BMS_MQTT_PUB_BASE_INFO_ID;
+				LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+				
+				event.id = BMS_MQTT_PUB_REALTIME_INFO_ID;
+				event.param1 = 1;
+				event.param2 = 1;
+				LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+			}
+		}
+		before_mode = g_bms_judge_mode_info.cur_mode;
+		LSAPI_OSI_ThreadSleep(1000);
+	}
+}
 static void bmsRtuTask_test(void *param)
 {
 	uint8_t r_buffer[100] = {0x00};
@@ -429,6 +578,8 @@ static void bmsRtuTask_test(void *param)
 	tracker_snd_rd_cmd_to_bms(ZG_CMD_RD_BOARD_BASE_INFO);
 	//just for test
 	bms_get_frame_test();
+	//check current mode
+	tracker_snd_rd_cmd_to_bms(ZG_CMD_RD_CHARGE_MODE_INFO);
 	memset(r_buffer,0,sizeof(r_buffer));
 	memset(up_buffer,0,sizeof(up_buffer));
 	while (1) 
@@ -560,6 +711,24 @@ void bms_event_handle_entry(void *param)
         LSAPI_Log_Debug("waitevenid = 0x%x\n",event.id);
         switch(event.id)
         {
+        	case BMS_TRACKER_QUIT_FLIGHT_MODE_ID:
+			{
+				LSAPI_NET_CFUN(1);
+				LSAPI_NET_CGACT();  
+				LSAPI_Log_Debug("bms_event_handle_entry,bms_app create netif\n");
+				LSAPI_NET_NetIf_Create();
+				if(LSAPI_NET_GET_GprsNetIf() == FALSE)
+				{
+				    LSAPI_Log_Debug("bms_event_handle_entry, netif failed\n");   
+				}
+				else
+				{
+					send_event.id = BMS_START_MQTT_ID;
+					LSAPI_OSI_EvnetSend(bms_mqtt_thread, &send_event);
+				}
+				tracker_snd_rd_cmd_to_bms(ZG_CMD_RD_CHARGE_MODE_INFO);
+			}
+			break;
         	case BMS_SND_ACTION_FROM_PLATFORM_ID:
     		{
     			uint8_t cmd = ZG_CMD_WD_ACTION_CONFIG_INFO;
@@ -587,6 +756,19 @@ void bms_event_handle_entry(void *param)
 				//LSAPI_OSI_TimerStart(bms_tracker_timer, 10000);
 				break;
 			}
+			case BMS_GET_CHARGE_MODE_ID:
+			{
+				uint8_t cmd = ZG_CMD_RD_CHARGE_MODE_INFO;
+				tracker_snd_rd_cmd_to_bms(cmd);
+			}
+			break;
+			case BMS_SND_TRACKER_MODE_ID:
+			{
+				uint8_t cmd = (uint8_t)event.param1;
+				uint8_t mode = 0x01;
+				tracker_snd_mode_cmd_to_bms(cmd,mode);
+			}
+			break;
             default:
             break;             
         }
@@ -801,13 +983,36 @@ int appimg_enter(void *param)
 	}
 #endif
 	get_time_week();
+	LSAPI_GpioConfig_t gpioConfig = {0};
+							
+	gpioConfig.id = BMS_TRACKER_DET_CHECK_GPIO; // gpio2, just for exmaple, 
+	gpioConfig.mode = LS_GPIO_INPUT;
+    gpioConfig.intr_enabled = true;
+    gpioConfig.intr_level = false;
+    gpioConfig.rising = true;
+    gpioConfig.falling = true;
+    gpioConfig.cb = det_gpio_IntrCB;
+    gpioConfig.cb_ctx = NULL;
 
+	// create instance
+	det_gpio = LSAPI_Device_GPIOCreate(&gpioConfig);
+	if (NULL == det_gpio)
+	{
+		LSAPI_Log_Debug("LSAPI_Device_GPIOCreate error.");
+	}
+	else
+	{
+		LSAPI_Device_Open(det_gpio);
+	}
 	g_RingBufferMutex = LSAPI_OSI_MutexCreate();
 	bms_RealtimeInfoMutex = LSAPI_OSI_MutexCreate();
 	bms_event_handle_init();
 	    
     bms_mqtt_thread = LSAPI_OSI_ThreadCreate("[BMS_MQTT_task]", bms_MqttEntry, NULL, LSAPI_OSI_PRIORITY_ABOVE_NORMAL, 1024*64, 4);
 	bms_tracker_thread = LSAPI_OSI_ThreadCreate("[BMS_Rtu_task]", bmsRtuTask_test, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*4, 4);
+	
+	tarcker_mode_thread = LSAPI_OSI_ThreadCreate("[BMS_Mode_task]", bmsModeTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*4, 4);
+	
 	bms_gnss_thread = LSAPI_OSI_ThreadCreate("[BMS_Gnss_task]", gnssUartTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
 	bms_gnss_parser_thread = LSAPI_OSI_ThreadCreate("[Gnss_Parse_task]", gnssParseTask, NULL, LSAPI_OSI_PRIORITY_NORMAL, 1024*64, 4);
 	sc7a20_func();

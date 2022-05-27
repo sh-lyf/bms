@@ -19,6 +19,10 @@
 #define ZG_CMD_WD_ACTION_CONFIG_INFO 			0xE1
 #define ZG_CMD_RD_SAFE_EVENT_INFO 				0xE2
 
+#define ZG_CMD_RD_CHARGE_MODE_INFO				0xF1
+#define ZG_CMD_WR_SEARCH_MODE_CTRL				0xF2
+#define ZG_CMD_WR_FLIGHT_MODE_CTRL				0xF3
+
 typedef struct _bms_register_info_t{
 
 	uint16_t index;

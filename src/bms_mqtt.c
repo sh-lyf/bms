@@ -39,7 +39,12 @@ LSAPI_OSI_Timer_t *bms_realtime_timer_t = NULL;
 //LSAPI_OSI_Timer_t *bms_batinfo_timer_t = NULL;
 LSAPI_OSI_Timer_t *bms_safeevent_timer_t = NULL;
 
+LSAPI_OSI_Timer_t *bms_search_mode_timer_t = NULL;
+LSAPI_OSI_Timer_t *bms_storage_mode_timer_t = NULL;
+
 LSAPI_OSI_Mutex_t *bms_mqtt_pub_sub_mutex = NULL;
+
+uint32_t g_storage_mode_cnt = 0;
 
 BMS_REALTIME_INFO_T tracker_realtime_info = {{0},{0}};
 Bat_info_t bms_cell_bat_info = {{0},{0}};
@@ -47,6 +52,17 @@ Bat_info_t bms_cell_bat_info = {{0},{0}};
 char tracker_ota_url_1[64] = {0};
 char tracker_ota_url_2[64] = {0};
 char *key = "LibSafeAesKeys22";
+
+extern bms_tracker_mode_judge_info_t g_bms_judge_mode_info;
+bms_tracker_mode_info_t g_tracker_mode[7] = {
+	{EXTRA_OPERATE_MODE,480,0,0},
+	{EXTRA_TRANSPORT_MODE,2,30,30},
+	{EXTRA_STORAGE_MODE,8,0,0},
+	{EXTRA_CHARGE_MODE_1,8,0,0},
+	{EXTRA_CHARGE_MODE_2,5,0,0},
+	{EXTRA_SEARCH_MODE,2,0,0},
+	{EXTRA_FLIGHT_MODE,0,0,0},
+	};
 
 
 #define BMS_TRACKER_MQTT_SUB_TOPIC_BASE_INFO_REPLY "/test/tracker001/tracker/info/base/post_reply"
@@ -86,12 +102,16 @@ char *key = "LibSafeAesKeys22";
 
 
 #define BMS_SUB_TABLE_MAX 14
+
+int32_t bms_mode_change_func(int32_t mode,void *Param);
 int bms_baseinfo_replay_from_platform(char *payload,int len);
 int bms_baseinfo_post_from_self(char *payload,int len);
 int bms_bms_action_from_platform(char *payload,int len);
 int bms_tracker_action_from_platform(char *payload,int len);
 int bms_tracker_query_from_platform(char *payload,int len);
 int bms_tracker_ota_from_platform(char *payload,int len);
+int bms_extra_action_from_platform(char *payload,int len);
+
 
 int bms_post_baseinfo_to_platform(void);
 int bms_post_realtime_info_to_platform(int64_t value);
@@ -114,10 +134,11 @@ BMS_MQTT_SUB_TOPIC_T bms_mqtt_sub_table[BMS_SUB_TABLE_MAX] =
 	{BMS_TRACKER_MQTT_SUB_TOPIC_TRACKER_OTA,bms_tracker_ota_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_BMS_OPERATION,bms_bms_action_from_platform,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_TRACKER_OPERATION,bms_tracker_action_from_platform,0},
-	{BMS_TRACKER_MQTT_SUB_TOPIC_QUERY,bms_tracker_query_from_platform,0},
+	{BMS_TRACKER_MQTT_SUB_TOPIC_EXTRA,bms_extra_action_from_platform,0},
+	{BMS_TRACKER_MQTT_SUB_TOPIC_QUERY,bms_tracker_query_from_platform,0},	
 	{BMS_TRACKER_MQTT_SUB_TOPIC_LIBSAFE_OTA,NULL,0},
 	{BMS_TRACKER_MQTT_SUB_TOPIC_CONFIG,NULL,0},
-	{BMS_TRACKER_MQTT_SUB_TOPIC_EXTRA,NULL,0}
+	
 };
 
 
@@ -203,17 +224,19 @@ int get_tracker_base_info(void)
 }
 
 
-int bms_PdpActive()
+int bms_PdpActive(uint8_t nState)
 {
     LSAPI_OSI_Event_t event = {0};
 	unsigned res = 0;
-	uint8_t nState = 1;
     uint8_t nCid = 1;
 	uint8_t nSim = 0;
 	char *apn = "ctnet";
-	res = LSAPI_NET_SetPdpcont(nCid, (uint8_t *)apn, NULL, NULL);
-	LSAPI_Log_Debug("LSAPI_NET_SetPdpcont nCID=%d,nRet=%d\n", nCid, res);
-    /* 1. active PDP begin */
+	//if(nState == 1)
+	//{
+	//	res = LSAPI_NET_SetPdpcont(nCid, (uint8_t *)apn, NULL, NULL);
+	//	LSAPI_Log_Debug("LSAPI_NET_SetPdpcont nCID=%d,nRet=%d\n", nCid, res);    
+	//}
+	/* 1. active PDP begin */
 	res = LSAPI_NET_GprsAct(nState, nCid, nSim, &event);
 	LSAPI_Log_Debug("LSAPI_NET_GprsAct event.id(%d)", event.id);
 	LSAPI_Log_Debug("LSAPI_NET_GprsAct res(%d)", res);
@@ -255,7 +278,7 @@ int LSAPI_NET_CGACT(void)
 	nRet = LSAPI_NET_GetGprsActState(&nActstate);
 	if (nActstate != 1)
 	{
-	    bms_PdpActive();
+	    bms_PdpActive(1);
 		
 	}
 	else
@@ -556,16 +579,165 @@ int bms_tracker_action_from_platform(char *payload,int len)
 	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
 	if(turnOffBms)
 	{
-		//LSAPI_OSI_Event_t event = {};
-		///event.id = BMS_SND_ACTION_FROM_PLATFORM_ID;
-		//event.param1 = turnOffBms;
-		// LSAPI_OSI_EvnetSend(bms_thread_event, &event);
+		LSAPI_OSI_Event_t event = {};
+		event.id = BMS_SND_ACTION_FROM_PLATFORM_ID;
+		event.param1 = turnOffBms;
+		LSAPI_OSI_EvnetSend(bms_thread_event, &event);
 	}
 	if(turnOffTracker)
 	{
-		//LSAPI_SYS_PowerOff(); 
+		LSAPI_SYS_PowerOff(); 
 	}	
 
+	return 0;
+}
+
+int bms_extra_action_from_platform(char *payload,int len)
+{
+	MeassageData msg = MeassageData_init_zero;
+	
+	char encrypt_buf[512] = {0};
+	char decrypt_buf[512] = {0};
+	uint16_t encrypt_len = 0;
+	uint16_t decrypt_len = 0;
+	uint16_t num = 0;
+	uint16_t cnt = 0;
+	uint16_t data_len = 0;
+	char thingId[64] = {0};
+	int32_t code;
+	int32_t any;
+	int64_t timestamp; 
+	char actionName[64] = {0};
+	int32_t param_count = 0;
+	int32_t modeId = 0;
+	int32_t modelParams[10] = {0};
+	bool status =false;
+
+	LSAPI_OSI_Event_t event = {};
+	event.id = BMS_MQTT_PUB_EXTRA_ACTION_REPLY_ID;
+	LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+	
+	LSAPI_Log_Debug("bms_extra_action_from_platform payload is %s",payload); 
+	LSAPI_Log_Debug("bms_extra_action_from_platform payload len is %d",len); 
+
+	data_len = (payload[0] << 8 | payload[1]);
+	LSAPI_Log_Debug("bms_extra_action_from_platform,data len is %d",data_len);
+	
+	encrypt_len = data_len;
+	memcpy(encrypt_buf,payload + 2,encrypt_len);
+
+	decrypt_len = bms_payload_decrypte(encrypt_buf,decrypt_buf,encrypt_len);
+	LSAPI_Log_Debug("bms_extra_action_from_platform,decrypt_len is %d",decrypt_len);
+		
+	pb_istream_t is = pb_istream_from_buffer(decrypt_buf,decrypt_len);
+	if(!(pb_decode(&is,MeassageData_fields,&msg)))
+	{
+		LSAPI_Log_Debug("bms_extra_action_from_platform pb_decode error"); 
+		return -1;
+	}
+	timestamp = msg.header.timestamp;
+	strncpy(thingId,msg.header.thingId,64);
+	code = msg.code;
+	LSAPI_Log_Debug("bms_extra_action_from_platform ota timestamp is %lld,code is %d", timestamp,code);
+
+	if (strcmp(msg.data.type_url, "type.googleapis.com/TrackerOperation") == 0)
+    {
+    	uint32_t cnt = 0;
+        ExtraAction pbdata = ExtraAction_init_zero;
+        is = pb_istream_from_buffer(msg.data.value.bytes, msg.data.value.size);
+        status = pb_decode(&is, TrackerOperation_fields, &pbdata);
+		strncpy(actionName,pbdata.actionName,64);
+		modeId = pbdata.locationModeAction.modeId;
+
+		param_count = pbdata.locationModeAction.modelParams_count;
+		for(cnt = 0; cnt < param_count; cnt++)
+		{
+			modelParams[cnt] = pbdata.locationModeAction.modelParams[cnt];
+		}
+		bms_mode_change_func(modeId,modelParams);
+		LSAPI_Log_Debug("bms_extra_action_from_platform ota actionName is %s,param_count is %d,modeId is %d", actionName,param_count,modeId);
+    }
+
+	return 0;
+}
+
+void bms_mqtt_search_mode_timer_callback(void *param)
+{
+	g_bms_judge_mode_info.cur_mode = EXTRA_STORAGE_MODE;
+}
+
+int32_t bms_mode_change_func(int32_t mode,void *Param)
+{
+	int32_t modeId = mode;
+	int32_t *modeParam = (int32_t *)Param;
+	LSAPI_OSI_Event_t event = {};
+
+	if(modeId == EXTRA_STORAGE_MODE)
+	{
+		g_tracker_mode[modeId -1].time_interval = modeParam[0];
+		g_tracker_mode[modeId -1].report_rate_cur = modeParam[1];	
+		g_tracker_mode[modeId -1].report_rate_last = modeParam[2];
+	}
+	else
+	{
+		g_tracker_mode[modeId -1].report_rate_cur = modeParam[0];
+	}
+
+#if 1
+	if((modeId != g_bms_judge_mode_info.cur_mode) && (g_bms_judge_mode_info.cur_mode != EXTRA_SEARCH_MODE))
+	{
+		g_bms_judge_mode_info.cur_mode = modeId;
+		
+		if(modeId == EXTRA_STORAGE_MODE)
+			g_storage_mode_cnt = 0;
+		
+		event.id = BMS_MQTT_PUB_BASE_INFO_ID;
+		LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+		
+		event.id = BMS_MQTT_PUB_REALTIME_INFO_ID;
+		event.param1 = 1;
+		event.param2 = 1;
+		LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+		if(modeId == EXTRA_FLIGHT_MODE)
+		{
+			event.id = BMS_SND_TRACKER_MODE_ID;
+			event.param1 = ZG_CMD_WR_FLIGHT_MODE_CTRL;
+			LSAPI_OSI_EvnetSend(bms_thread_event, &event);
+
+			event.id = BMS_STOP_MQTT_ID;
+			LSAPI_OSI_EvnetSend(bms_mqtt_thread, &event);
+
+			bms_PdpActive(0);
+
+			LSAPI_NET_NetIf_Destory();
+			
+			LSAPI_NET_CFUN(0);	
+				
+		}
+		
+		if(modeId == EXTRA_SEARCH_MODE)
+		{			
+			event.id = BMS_SND_TRACKER_MODE_ID;
+			event.param1 = ZG_CMD_WR_SEARCH_MODE_CTRL;
+			LSAPI_OSI_EvnetSend(bms_thread_event, &event);
+
+			if(bms_search_mode_timer_t == NULL)
+			{
+				bms_search_mode_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_search_mode_timer_callback, NULL);
+				LSAPI_OSI_TimerStart(bms_search_mode_timer_t, 4*3600*1000);
+			    
+			}
+			else
+			{
+				LSAPI_OSI_TimerStop(bms_search_mode_timer_t);
+				LSAPI_OSI_TimerStart(bms_search_mode_timer_t, 4*3600*1000);
+			}
+
+			
+		}	
+		
+	}
+#endif	
 	return 0;
 }
 
@@ -1809,8 +1981,6 @@ void bms_mqtt_safe_event_timer_callback(void *param)
 
 }
 
-
-
 void bms_MqttEntry(void *param)
 {
 	int res = 0;
@@ -1862,32 +2032,22 @@ void bms_MqttEntry(void *param)
 			        return;
 			    }
 
+
 				if(bms_realtime_timer_t == NULL)
 				{
 					bms_realtime_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_realtime_timer_callback, NULL);
-					if(LSAPI_OSI_TimerStart(bms_realtime_timer_t, 10000) == FALSE)
+					if(LSAPI_OSI_TimerStart(bms_realtime_timer_t, 3000) == FALSE)
 				    {
 				        LSAPI_Log_Debug("timer start failed\n");
 				        LSAPI_OSI_ThreadExit();
 
 				    }
 				}
-#if 0
-				if(bms_batinfo_timer_t == NULL)
-				{
-					bms_batinfo_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_batinfo_timer_callback, NULL);
-					if(LSAPI_OSI_TimerStart(bms_batinfo_timer_t, 10000) == FALSE)
-				    {
-				        LSAPI_Log_Debug("timer start failed\n");
-				        LSAPI_OSI_ThreadExit();
-
-				    }
-				}
-#endif
+				
 				if(bms_safeevent_timer_t == NULL)
 				{
 					bms_safeevent_timer_t = LSAPI_OSI_TimerCreate(LSAPI_OSI_ThreadCurrent(), bms_mqtt_safe_event_timer_callback, NULL);
-					if(LSAPI_OSI_TimerStart(bms_safeevent_timer_t, 10000) == FALSE)
+					if(LSAPI_OSI_TimerStart(bms_safeevent_timer_t, 3000) == FALSE)
 				    {
 				        LSAPI_Log_Debug("timer start failed\n");
 				        LSAPI_OSI_ThreadExit();
@@ -1911,7 +2071,7 @@ void bms_MqttEntry(void *param)
 			{
 			 	static int16_t cnt = 0;
 
-				if((cnt < 10) && (bms_mqtt_sub_table[cnt].sub_flag == 0))
+				if((cnt < 11) && (bms_mqtt_sub_table[cnt].sub_flag == 0))
 				{	
 					LSAPI_MQTT_CFG("topic",bms_mqtt_sub_table[cnt].topic);
 					LSAPI_MQTT_SUB(1);
@@ -1967,6 +2127,10 @@ void bms_MqttEntry(void *param)
 			case BMS_MQTT_PUB_REALTIME_INFO_ID:
 				{
 					int64_t timestamp = LSAPI_OSI_EpochTime();
+					uint32_t timeout = 0;
+					int8_t mode_index = 0;
+					mode_index = g_bms_judge_mode_info.cur_mode;
+					
 					LSAPI_OSI_TimerStop(bms_realtime_timer_t);
 					if(event.param1 == 1)
 					{
@@ -1978,8 +2142,27 @@ void bms_MqttEntry(void *param)
 						LSAPI_OSI_ThreadSleep(200);
 						bms_post_cellbat_info_to_platform(timestamp);
 					}
-											
-					LSAPI_OSI_TimerStart(bms_realtime_timer_t,10000);
+
+					if(g_bms_judge_mode_info.cur_mode == EXTRA_STORAGE_MODE)
+					{
+						if(g_storage_mode_cnt < (g_tracker_mode[mode_index - 1].time_interval / g_tracker_mode[mode_index - 1].report_rate_cur))
+						{
+							timeout = g_tracker_mode[mode_index - 1].report_rate_cur;
+							g_storage_mode_cnt++;
+						}
+						else
+						{
+							timeout = g_tracker_mode[mode_index - 1].report_rate_last;
+						}
+					}
+					else
+						timeout = g_tracker_mode[mode_index - 1].report_rate_cur;
+
+					if(timeout != 0)
+					{
+						LSAPI_OSI_TimerStart(bms_realtime_timer_t,timeout*60*1000);	
+					}						
+					
 				}
 				break;
 			case BMS_MQTT_PUB_LIBSAFE_OTA_REPLY_ID:
@@ -1987,6 +2170,7 @@ void bms_MqttEntry(void *param)
 			case BMS_MQTT_PUB_BMS_OPERATION_REPLY_ID:
 			case BMS_MQTT_PUB_TRACKER_OPERATION_REPLY_ID:
 			case BMS_MQTT_PUB_QUERY_REPLY_ID:
+			case BMS_MQTT_PUB_EXTRA_ACTION_REPLY_ID:
 			{	
 				if(bms_safeevent_timer_t != NULL)
 					LSAPI_OSI_TimerStop(bms_safeevent_timer_t);
