@@ -57,8 +57,8 @@ extern bms_tracker_mode_judge_info_t g_bms_judge_mode_info;
 bms_tracker_mode_info_t g_tracker_mode[7] = {
 	{EXTRA_OPERATE_MODE,480,0,0},
 	{EXTRA_TRANSPORT_MODE,2,30,30},
-	{EXTRA_STORAGE_MODE,8,0,0},
-	{EXTRA_CHARGE_MODE_1,8,0,0},
+	{EXTRA_STORAGE_MODE,480,0,0},
+	{EXTRA_CHARGE_MODE_1,480,0,0},
 	{EXTRA_CHARGE_MODE_2,5,0,0},
 	{EXTRA_SEARCH_MODE,2,0,0},
 	{EXTRA_FLIGHT_MODE,0,0,0},
